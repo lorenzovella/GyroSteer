@@ -19,8 +19,30 @@ use crate::steer::{Action, Command, CoreHandle, CoreState, Sample, Tuning, WINDO
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Whether a mod of version `theirs` works with this app: the same major and minor version. A release that changes
+/// the mod bumps the minor version; patch releases leave the mod alone, so players needn't reinstall it.
+fn mod_matches(theirs: &str) -> bool {
+    same_minor(theirs, VERSION)
+}
+
+fn same_minor(a: &str, b: &str) -> bool {
+    let minor = |v: &str| v.split('.').take(2).collect::<Vec<_>>().join(".");
+    minor(a) == minor(b)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn mod_versions() {
+        assert!(super::same_minor("0.3.0", "0.3.1"), "a patch update keeps the mod");
+        assert!(!super::same_minor("0.3.1", "0.4.0"), "a minor update needs the new mod");
+        assert!(!super::same_minor("1.3.0", "0.3.0"));
+        assert!(super::mod_matches(super::VERSION));
+    }
+}
+
 /// What's saved between runs.
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Clone, PartialEq)]
 #[serde(default)]
 struct Saved {
     tuning: Tuning,
@@ -55,7 +77,15 @@ pub struct GyroApp {
     snapshot: Option<PathBuf>,
     snapshot_requested: bool,
     quit: Arc<AtomicBool>,
+    /// The settings as last written to disk, and since when they've differed from that.
+    last_saved: Saved,
+    unsaved_since: Option<f64>,
+    /// Asking whether to put the tuning back to the defaults.
+    confirm_reset: bool,
 }
+
+/// Seconds a change waits before it's written, so dragging a slider doesn't write on every frame.
+const SAVE_DELAY: f64 = 0.5;
 
 impl GyroApp {
     pub fn new(cc: &eframe::CreationContext<'_>, options: Options) -> GyroApp {
@@ -63,9 +93,10 @@ impl GyroApp {
         // Follow the system unless the command line says otherwise; set every time, as egui saves the choice.
         cc.egui_ctx.set_theme(options.theme.map_or(egui::ThemePreference::System, Into::into));
         let mut bindings = Action::default_bindings();
-        for (action, buttons) in saved.bindings {
+        for (action, buttons) in saved.bindings.clone() {
             bindings.insert(action, buttons);
         }
+        let last_saved = Saved { bindings: bindings.clone(), ..saved.clone() };
         let core = CoreHandle::start(saved.tuning.clone(), bindings);
         if options.simulate {
             core.send(Command::Simulate(true));
@@ -87,12 +118,49 @@ impl GyroApp {
             snapshot: options.snapshot,
             snapshot_requested: false,
             quit: Arc::new(AtomicBool::new(false)),
+            last_saved,
+            unsaved_since: None,
+            confirm_reset: false,
         }
+    }
+
+    fn settings(&self) -> Saved {
+        Saved {
+            tuning: self.tuning.clone(),
+            // Until the steering thread first reports, its bindings are the ones loaded at the start.
+            bindings: if self.state.bindings.is_empty() {
+                self.last_saved.bindings.clone()
+            } else {
+                self.state.bindings.clone()
+            },
+            keep_on_top: self.keep_on_top,
+            raw_accel: self.raw_accel,
+        }
+    }
+
+    /// Writes the settings to disk shortly after they change, so they survive the app being force-quit or crashing,
+    /// not just a normal quit.
+    fn save_changes(&mut self, frame: &mut eframe::Frame) {
+        let current = self.settings();
+        if current == self.last_saved {
+            self.unsaved_since = None;
+            return;
+        }
+        let since = *self.unsaved_since.get_or_insert(self.now);
+        if self.now - since < SAVE_DELAY {
+            return;
+        }
+        if let Some(storage) = frame.storage_mut() {
+            eframe::set_value(storage, "settings", &current);
+            storage.flush();
+        }
+        self.last_saved = current;
+        self.unsaved_since = None;
     }
 }
 
 impl eframe::App for GyroApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.now = now();
         self.refresh_times.push_back(self.now);
@@ -130,17 +198,14 @@ impl eframe::App for GyroApp {
             .frame(egui::Frame::central_panel(ui.style()).inner_margin(egui::Margin::same(16)))
             .show(ui, |ui| self.charts(ui, &colors));
 
+        self.save_changes(frame);
         self.take_snapshot(&ctx);
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        let saved = Saved {
-            tuning: self.tuning.clone(),
-            bindings: self.state.bindings.clone(),
-            keep_on_top: self.keep_on_top,
-            raw_accel: self.raw_accel,
-        };
+        let saved = self.settings();
         eframe::set_value(storage, "settings", &saved);
+        self.last_saved = saved;
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
@@ -234,9 +299,9 @@ impl GyroApp {
         let g = &s.game;
         let (gs, gt) = if !g.answering(self.now) {
             (Chip::Critical, "BeamNG isn't answering: is it running with the mod?".to_string())
-        } else if g.mod_version.as_deref() != Some(VERSION) {
+        } else if !g.mod_version.as_deref().is_some_and(mod_matches) {
             let theirs = g.mod_version.as_deref().map_or("an older version".to_string(), |v| format!("version {v}"));
-            (Chip::Warning, format!("The BeamNG mod is {theirs}: install the one from GyroSteer {VERSION}"))
+            (Chip::Warning, format!("The BeamNG mod is {theirs}: install the one that came with GyroSteer {VERSION}"))
         } else if !g.has_car {
             (Chip::Warning, "BeamNG: no car to steer".to_string())
         } else if g.steering {
@@ -389,7 +454,34 @@ impl GyroApp {
     }
 
     fn tuning_section(&mut self, ui: &mut egui::Ui, colors: &Colors) {
-        ui.label(RichText::new("Tuning").strong());
+        let at_defaults = self.tuning == Tuning::default();
+        let mut ask = false;
+        egui::Sides::new().show(
+            ui,
+            |ui| ui.label(RichText::new("Tuning").strong()),
+            |ui| {
+                let button = ui
+                    .add_enabled(!at_defaults && !self.confirm_reset, egui::Button::new("Reset to defaults"))
+                    .on_hover_text("Puts every setting on this page, and Gas and brake, back to the defaults")
+                    .on_disabled_hover_text("Everything is at the defaults already");
+                ask = button.clicked();
+            },
+        );
+        if ask {
+            self.confirm_reset = true;
+        }
+        if self.confirm_reset {
+            caption(ui, colors, "Put the tuning and Gas and brake back to the defaults? Controller buttons stay as they are.");
+            ui.horizontal(|ui| {
+                if ui.button("Reset").clicked() {
+                    self.tuning = Tuning::default();
+                    self.confirm_reset = false;
+                }
+                if ui.button("Cancel").clicked() {
+                    self.confirm_reset = false;
+                }
+            });
+        }
         ui.add_space(6.0);
         let t = &mut self.tuning;
         slider_row(ui, colors, "Full lock", &mut t.range, 15.0..=540.0, 5.0, |v| format!("{v:.0}° of wheel"),
@@ -558,7 +650,10 @@ fn slider_row(
     egui::Sides::new().show(ui, |ui| ui.label(title), |ui| ui.label(RichText::new(shown).color(colors.weak)));
     ui.scope(|ui| {
         ui.spacing_mut().slider_width = ui.available_width();
-        ui.add(egui::Slider::new(value, range).step_by(step).show_value(false));
+        if ui.add(egui::Slider::new(value, range).step_by(step).show_value(false)).changed() {
+            // Exactly on the step, so 1.2 is saved as 1.2, not 1.2000000000000002.
+            *value = ((*value / step).round() * step * 1e6).round() / 1e6;
+        }
     });
     caption(ui, colors, help);
     ui.add_space(8.0);

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Reset to defaults** button for the tuning, with a confirmation. Controller buttons keep their own Default
+  buttons.
+- Settings are saved half a second after each change, not only when the app quits, so they survive a crash or a
+  force-quit.
+- Patch updates no longer ask you to reinstall the mod: the app only warns when the mod's major or minor version
+  differs.
+
 ## 0.3.0
 
 First public release.

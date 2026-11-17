@@ -115,7 +115,8 @@ Hover over a graph to read the values at that moment. **Pause graphs** freezes t
 
 ## Tuning
 
-These are in the window and are saved between runs.
+These are in the window. Changes are saved as you make them and kept between runs. **Reset to defaults** puts
+them back (your controller buttons stay as they are; each has its own **Default** button).
 
 | Setting | Default | What it does |
 | --- | --- | --- |
@@ -135,7 +136,7 @@ These are in the window and are saved between runs.
 - **"BeamNG isn't answering."** The game isn't running, or the mod isn't loaded. Look in BeamNG's log
   (`beamng.log` in the user folder) for `gyroSteer`: a line saying it's "listening for the GyroSteer app" means the
   mod loaded. Only one copy of the mod should be in the mods folder.
-- **"The BeamNG mod is an older version."** Install `gyro_steer.zip` from the same release as the app.
+- **"The BeamNG mod is an older version."** Install the `gyro_steer.zip` that came with the app.
 - **"No controller."** Check that the controller is connected and, for third-party pads, in a mode that sends motion
   (Switch mode on the G5 Pro). Close Steam, or turn off Steam Input for the controller, if Steam is running: it can
   hold on to the controller.
@@ -194,8 +195,10 @@ a few seconds and quits.
 ### Releasing
 
 1. Set the new version in `Cargo.toml` and in `VERSION` at the top of `mod/gyro_steer/lua/ge/extensions/gyroSteer.lua`
-   (the build checks they match), and run `cargo build` to update `Cargo.lock`.
-2. Add a section for it at the top of `CHANGELOG.md`, headed `## <version>`.
+   (the build checks they match), and run `cargo build` to update `Cargo.lock`. If the mod changed, bump at least
+   the minor version (0.3.x → 0.4.0): the app only asks players to reinstall the mod when major.minor differ.
+2. In `CHANGELOG.md`, rename the `## Unreleased` section at the top to `## <version>` (the release notes come
+   from it).
 3. Commit, then tag and push: `git tag v0.3.0 && git push origin main v0.3.0`.
 
 GitHub Actions then builds the mod and the app for Windows, macOS and Linux, and publishes a release with the
