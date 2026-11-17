@@ -44,17 +44,22 @@ struct GameStatus {
     var applied: Double?
 }
 
+/// The defaults are the setup that drives well with the G5 Pro; anything changed in the window is saved over them.
 struct Tuning {
     /// Wheel angle for full lock, degrees each way.
-    var range = 45.0
+    var range = 50.0
     var deadzone = 1.5
-    var curve = 1.0
+    var curve = 1.5
     var invert = false
-    var direct = false
+    var direct = true
     /// Past `threshold` degrees of tilt the wheel keeps turning, at up to `speed` degrees a second.
     var keepTurning = true
-    var threshold = 60.0
-    var speed = 270.0
+    var threshold = 48.0
+    var speed = 350.0
+    /// The right stick is the throttle and the left stick the brake, by how far each is pushed from the middle.
+    var pedals = true
+    /// Stick travel ignored around the middle, percent.
+    var pedalDeadzone = 5.0
 }
 
 /// Everything the window shows, copied out of the core.
@@ -73,6 +78,9 @@ struct CoreState {
     var learned: Set<String> = []
     var notice: String?
     var noticeTime: TimeInterval = 0
+    /// Pedals from the sticks, 0...1, as last sent to the game.
+    var throttle = 0.0
+    var brake = 0.0
 }
 
 // MARK: - Core
@@ -97,6 +105,8 @@ final class SteerCore {
     private var held: Set<ButtonAction> = []
     private var simulationStart = uptime()
     private var timer: DispatchSourceTimer?
+    private var lastPedalSend: TimeInterval = 0
+    private var lastModeSend: TimeInterval = 0
 
     init(port: UInt16, bindings: [ButtonAction: Set<String>], tuning: Tuning) {
         link = Link(port: port, queue: queue)
@@ -109,7 +119,7 @@ final class SteerCore {
     // MARK: Called from the window
 
     func snapshot() -> CoreState { queue.sync { state } }
-    func setTuning(_ t: Tuning) { queue.async { self.tuning = t } }
+    func setTuning(_ t: Tuning) { queue.async { self.tuning = t; self.updatePedals(); self.sendMode(uptime()) } }
     func setGyro(_ on: Bool) { queue.async { self.applyGyro(on) } }
     func recenter() { queue.async { self.perform(.recenter) } }
     func learn(_ action: ButtonAction?) { queue.async { self.state.learning = action; self.state.learned = []; self.changed() } }
@@ -152,7 +162,15 @@ final class SteerCore {
     }
 
     func shutdown() {
-        queue.sync { link.send("gs1 off") }
+        queue.sync {
+            link.send("gs1 off")
+            link.send("gs1 mode pedals=0 gyro=0")
+            if state.throttle > 0 || state.brake > 0 {
+                state.throttle = 0
+                state.brake = 0
+                sendPedals(uptime())
+            }
+        }
     }
 
     // MARK: Controller
@@ -174,6 +192,8 @@ final class SteerCore {
         fusion.reset()
         wheel.reset()
         lastMotion = nil
+        updatePedals()
+        sendMode(uptime())
         say("Using \(name)")
     }
 
@@ -182,6 +202,8 @@ final class SteerCore {
         controller = nil
         state.controllerName = nil
         if !state.simulate { link.send("gs1 off") }
+        updatePedals()  // no controller: lets go of both pedals
+        sendMode(uptime())
         lastPacket = nil
         say("Controller disconnected; steering handed back to the game")
         GCController.controllers().forEach(attach)
@@ -196,6 +218,7 @@ final class SteerCore {
     // MARK: Buttons
 
     private func onButtons(_ profile: GCPhysicalInputProfile) {
+        updatePedals()
         let pressed = Set(profile.buttons.filter { $0.value.isPressed }.map(\.key))
         if let action = state.learning {
             // Collect everything pressed until all buttons are let go, then save it. Stick directions don't count.
@@ -246,7 +269,47 @@ final class SteerCore {
             link.send("gs1 off")
             lastPacket = nil
         }
+        sendMode(uptime())
         say(on ? "Gyro steering on" : "Gyro steering off: the stick steers as usual")
+    }
+
+    /// Tells the mod whether the sticks are pedals right now and whether the gyro steers, so it can pause the game's
+    /// stick camera (and, while the gyro steers, the stick's own steering). Repeated every 0.5 s; the mod restores
+    /// them if it hears nothing for 2 s.
+    private func sendMode(_ t: TimeInterval) {
+        let pedalsOn = tuning.pedals && controller != nil
+        link.send("gs1 mode pedals=\(pedalsOn ? 1 : 0) gyro=\(state.gyroEnabled ? 1 : 0)")
+        lastModeSend = t
+    }
+
+    // MARK: Pedals
+
+    /// Reads the sticks (right = throttle, left = brake) and sends the pedals when they change. Without a controller,
+    /// or with the setting off, both are 0.
+    private func updatePedals() {
+        var throttle = 0.0, brake = 0.0
+        if tuning.pedals, let pad = controller?.extendedGamepad {
+            let dz = tuning.pedalDeadzone / 100
+            throttle = pedalOutput(x: Double(pad.rightThumbstick.xAxis.value),
+                                   y: Double(pad.rightThumbstick.yAxis.value), deadzone: dz)
+            brake = pedalOutput(x: Double(pad.leftThumbstick.xAxis.value),
+                                y: Double(pad.leftThumbstick.yAxis.value), deadzone: dz)
+        }
+        // Steps of 0.001, so changes too small to matter don't each send a packet.
+        throttle = (throttle * 1000).rounded() / 1000
+        brake = (brake * 1000).rounded() / 1000
+        guard throttle != state.throttle || brake != state.brake else { return }
+        state.throttle = throttle
+        state.brake = brake
+        sendPedals(uptime())
+        changed()
+    }
+
+    /// The mod passes each pedal to the car only when it changes (and again while it's held), so at rest the
+    /// triggers' own bindings in the game keep working.
+    private func sendPedals(_ t: TimeInterval) {
+        link.send(String(format: "gs1 p t=%.3f b=%.3f f=%d", state.throttle, state.brake, tuning.direct ? 2 : 1))
+        lastPedalSend = t
     }
 
     // MARK: Steering
@@ -283,6 +346,10 @@ final class SteerCore {
     private func tick() {
         let t = uptime()
         if state.simulate { simulateStep(t) }
+        updatePedals()
+        // While a pedal is held, keep it alive: the mod lets go of the pedals if the app goes quiet for 0.5 s.
+        if state.throttle > 0 || state.brake > 0, t - lastPedalSend > 0.1 { sendPedals(t) }
+        if t - lastModeSend > 0.5 { sendMode(t) }
         if state.gyroEnabled, let lastPacket, let lastMotion, t - lastMotion < 1 {
             // A steady hand can go quiet; resend so the mod doesn't give up.
             if t - lastSend > 0.15 { send(lastPacket, t) }
@@ -344,6 +411,8 @@ final class Engine {
     var keepTurning: Bool { didSet { saved(keepTurning, "keepTurning") } }
     var threshold: Double { didSet { saved(threshold, "threshold") } }
     var speed: Double { didSet { saved(speed, "turnSpeed") } }
+    var pedals: Bool { didSet { saved(pedals, "pedals") } }
+    var pedalDeadzone: Double { didSet { saved(pedalDeadzone, "pedalDeadzone") } }
     var keepOnTop: Bool { didSet { UserDefaults.standard.set(keepOnTop, forKey: "keepOnTop") } }
 
     var paused = false {
@@ -365,13 +434,17 @@ final class Engine {
 
     private init() {
         let d = UserDefaults.standard
-        let tuning = Tuning(range: d.object(forKey: "range") as? Double ?? 45,
-                            deadzone: d.object(forKey: "deadzone") as? Double ?? 1.5,
-                            curve: d.object(forKey: "curve") as? Double ?? 1,
-                            invert: d.bool(forKey: "invert"), direct: d.bool(forKey: "direct"),
-                            keepTurning: d.object(forKey: "keepTurning") as? Bool ?? true,
-                            threshold: d.object(forKey: "threshold") as? Double ?? 60,
-                            speed: d.object(forKey: "turnSpeed") as? Double ?? 270)
+        let base = Tuning()
+        let tuning = Tuning(range: d.object(forKey: "range") as? Double ?? base.range,
+                            deadzone: d.object(forKey: "deadzone") as? Double ?? base.deadzone,
+                            curve: d.object(forKey: "curve") as? Double ?? base.curve,
+                            invert: d.object(forKey: "invert") as? Bool ?? base.invert,
+                            direct: d.object(forKey: "direct") as? Bool ?? base.direct,
+                            keepTurning: d.object(forKey: "keepTurning") as? Bool ?? base.keepTurning,
+                            threshold: d.object(forKey: "threshold") as? Double ?? base.threshold,
+                            speed: d.object(forKey: "turnSpeed") as? Double ?? base.speed,
+                            pedals: d.object(forKey: "pedals") as? Bool ?? base.pedals,
+                            pedalDeadzone: d.object(forKey: "pedalDeadzone") as? Double ?? base.pedalDeadzone)
         var bindings: [ButtonAction: Set<String>] = [:]
         for action in ButtonAction.allCases {
             bindings[action] = d.stringArray(forKey: "buttons." + action.rawValue).map(Set.init) ?? action.defaultButtons
@@ -385,13 +458,16 @@ final class Engine {
         keepTurning = tuning.keepTurning
         threshold = tuning.threshold
         speed = tuning.speed
+        pedals = tuning.pedals
+        pedalDeadzone = tuning.pedalDeadzone
         keepOnTop = d.bool(forKey: "keepOnTop")
     }
 
     private func saved(_ value: Any, _ key: String) {
         UserDefaults.standard.set(value, forKey: key)
         core.setTuning(Tuning(range: range, deadzone: deadzone, curve: curve, invert: invert, direct: direct,
-                              keepTurning: keepTurning, threshold: threshold, speed: speed))
+                              keepTurning: keepTurning, threshold: threshold, speed: speed,
+                              pedals: pedals, pedalDeadzone: pedalDeadzone))
     }
 
     func start() {
@@ -424,6 +500,8 @@ final class Engine {
     var notice: String? { now - state.noticeTime < 6 ? state.notice : nil }
     var motionRate: Int { state.history.reduce(0) { $0 + ($1.t > now - 1 ? 1 : 0) } }
     var gameAnswering: Bool { state.game.lastReply.map { now - $0 < 1.5 } ?? false }
+    var throttle: Double { state.throttle }
+    var brake: Double { state.brake }
     var displayed: [Sample] { paused ? frozen : state.history }
     var displayedNow: TimeInterval { paused ? frozenNow : now }
 

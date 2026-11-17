@@ -104,6 +104,15 @@ func runSelfTest() -> Bool {
     check(near(turn(-90, 5), -450), "it stops at full lock")
     _ = turn(0)
     check(near(turn(20), 20), "and starting again from level, it's 1:1 again")
+    // Sticks as pedals, with a 5% dead zone: the middle is 0, the edge in any direction is 1.
+    check(pedalOutput(x: 0, y: 0, deadzone: 0.05) == 0, "stick in the middle -> pedal 0")
+    check(pedalOutput(x: 0.03, y: -0.03, deadzone: 0.05) == 0, "stick inside the dead zone -> pedal 0")
+    check(near(pedalOutput(x: 0, y: -1, deadzone: 0.05), 1), "stick pushed to the edge -> pedal 1")
+    check(near(pedalOutput(x: -1, y: 0, deadzone: 0.05), 1), "any direction counts: pushed left to the edge -> pedal 1")
+    check(near(pedalOutput(x: 0.72, y: 0.72, deadzone: 0.05), 1), "diagonal reading past the edge -> capped at 1")
+    let half = pedalOutput(x: 0, y: 0.525, deadzone: 0.05)
+    check(near(half, 0.5), String(format: "halfway between dead zone and edge -> %.3f (expected 0.500)", half))
+
     let plain = VirtualWheel()
     let off = plain.update(tilt: 80, dt: 1, keepTurning: false, threshold: 60, speed: 300, lock: 450)
     check(near(off, 80), "with keep turning off, the wheel just follows the tilt")

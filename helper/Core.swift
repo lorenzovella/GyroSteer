@@ -188,6 +188,16 @@ func steeringOutput(angle: Double, lock: Double, deadzone: Double, curve: Double
     return pow(t, curve) * (angle < 0 ? -1 : 1)
 }
 
+/// Maps a stick to a pedal, 0...1, by how far it is pushed from the middle in any direction. Inside `deadzone`
+/// (0...1 of the stick's travel) it is 0; from there it rises evenly to 1 at the edge. Diagonals can read a little
+/// past 1, so the distance is capped.
+func pedalOutput(x: Double, y: Double, deadzone: Double) -> Double {
+    let distance = min(1, (x * x + y * y).squareRoot())
+    let dz = min(max(deadzone, 0), 0.9)
+    guard distance > dz else { return 0 }
+    return (distance - dz) / (1 - dz)
+}
+
 func uptime() -> TimeInterval { ProcessInfo.processInfo.systemUptime }
 
 // MARK: - UDP link

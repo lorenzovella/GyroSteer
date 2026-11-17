@@ -6,6 +6,16 @@
 -- app can show that the game is listening and what the car did with the value after the game's smoothing.
 -- Steering goes through the vehicle's normal input.event, so the gamepad smoothing and steering assists still
 -- apply. Other steering inputs (the stick) still work; the next tilt reading takes over again.
+--
+-- Pedals from the sticks: "gs1 p t=<throttle 0..1> b=<brake 0..1> f=<filter>". Each pedal goes to the car only when
+-- it changes, and again every RESEND while it is held, so at rest the triggers' own bindings still work. If the app
+-- goes quiet for TIMEOUT while a pedal is held, the pedal is let go, so the throttle can't stick.
+--
+-- "gs1 mode pedals=<0|1> gyro=<0|1>", every 0.5 s: while the sticks are pedals, the camera ignores the stick (its
+-- turn input is cleared every frame, and the game's action filter is asked to drop the stick's camera actions), and,
+-- while the gyro steers, the filter is asked to drop the stick's own steering, so pushing a stick for the pedals
+-- doesn't swing the camera or steer. The mouse camera and the triggers are untouched; the keyboard's camera turn
+-- pauses too. Everything comes back when the app says so, goes quiet for MODE_TIMEOUT, or the mod unloads.
 
 local M = {}
 
@@ -27,6 +37,20 @@ local sentValue, sentFilter, sentVehId = nil, nil, nil
 local sinceSend = 0
 local sinceAck = 0
 local applied = nil
+local pedalSent = { throttle = 0, brake = 0 }
+local pedalSince = { throttle = 0, brake = 0 }
+local pedalFilter = FILTER_PAD
+local pedalVehId = nil
+local pedalQuiet = 0
+
+local MODE_TIMEOUT = 2
+local PAUSED_ACTIONS = {
+  camera = { 'rotate_camera_horizontal', 'rotate_camera_vertical' },  -- the right stick's default camera actions
+  steering = { 'steering' },  -- stick or wheel steering; the keyboard uses steer_left/steer_right
+}
+local modeQuiet = math.huge
+local modePedals, modeGyro = false, false
+local paused = { camera = false, steering = false }
 
 local function openSocket()
   local s = socket.udp()
@@ -73,6 +97,70 @@ local function apply(value, filter, dt)
   end
 end
 
+local function pedalEvent(veh, name, value, filter)
+  veh:queueLuaCommand(string.format("input.event('%s', %.3f, %d)", name, value, filter))
+end
+
+-- Lets go of any pedal still held, in the car it was sent to.
+local function releasePedals()
+  local veh = pedalVehId and be:getObjectByID(pedalVehId)
+  for name, v in pairs(pedalSent) do
+    if v > 0 and veh then pedalEvent(veh, name, 0, pedalFilter) end
+    pedalSent[name] = 0
+  end
+end
+
+local function applyPedals(throttle, brake, filter)
+  local veh = getPlayerVehicle(0)
+  if not veh then return end
+  local id = veh:getId()
+  if pedalVehId and id ~= pedalVehId then releasePedals() end  -- switched cars: let go in the old one
+  pedalVehId, pedalFilter = id, filter
+  for name, v in pairs({ throttle = throttle, brake = brake }) do
+    if v ~= pedalSent[name] or (v > 0 and pedalSince[name] >= RESEND) then
+      pedalEvent(veh, name, v, filter)
+      pedalSent[name] = v
+      pedalSince[name] = 0
+    end
+  end
+end
+
+-- Clears the stick's camera turn. Between frames MoveManager is the main view's input state, and the camera reads
+-- it later in the frame (onPreRender), so clearing it here each frame keeps the camera still even if the game's
+-- action filter lets the stick through. The mouse turns the camera through other fields, so it keeps working; the
+-- keyboard's camera turn uses these too, so it pauses with the stick.
+local function holdCamera()
+  local mm = MoveManager
+  if mm then mm.yawLeft, mm.yawRight, mm.pitchUp, mm.pitchDown = 0, 0, 0, 0 end
+end
+
+-- Pauses or restores one group of the game's input actions. `force` applies it even if it looks unchanged (at load,
+-- in case a Lua reload kept an old pause in the game's filter).
+local function pause(name, on, force)
+  if paused[name] == on and not force then return end
+  paused[name] = on
+  local filter = core_input_actionFilter
+  if filter then
+    filter.setGroup('gyroSteer_' .. name, PAUSED_ACTIONS[name])
+    filter.addAction(0, 'gyroSteer_' .. name, on)
+  end
+  if name == 'camera' and on then holdCamera() end
+  if not force then
+    local filtered = filter and filter.isActionBlocked and filter.isActionBlocked(PAUSED_ACTIONS[name][1])
+    log('I', 'gyroSteer', string.format('stick %s %s (game action filter reports blocked: %s)', name,
+      on and 'paused' or 'restored', tostring(filtered)))
+    if name == 'camera' then
+      ui_message(on and 'Sticks are gas and brake: stick camera paused' or 'Stick camera back', 3, 'gyroSteerCamera')
+    end
+  end
+end
+
+local function updatePauses()
+  local alive = modeQuiet < MODE_TIMEOUT
+  pause('camera', alive and modePedals)
+  pause('steering', alive and modePedals and modeGyro)
+end
+
 local function answer(ip, port)
   local reply = string.format('gs1 ack car=%d on=%d', getPlayerVehicle(0) and 1 or 0, active and 1 or 0)
   if active and applied then reply = reply .. string.format(' applied=%.4f', applied) end
@@ -90,8 +178,10 @@ local function onUpdate(dtReal)
     return
   end
 
-  -- Only the newest steering value matters; an "off" after it wins.
+  -- Only the newest steering value matters; an "off" after it wins. Likewise only the newest pedals.
   local value, filter, off, fromIp, fromPort
+  local throttle, brake, pFilter
+  local modeHeard = false
   for _ = 1, 500 do
     local data, ip, port = udp:receivefrom()
     if not data then break end
@@ -104,7 +194,30 @@ local function onUpdate(dtReal)
         value, off = v, false
         filter = tonumber(data:match('f=(%d)')) == 2 and FILTER_DIRECT or FILTER_PAD
       end
+    elseif data:sub(1, 6) == 'gs1 p ' then
+      local t, b = tonumber(data:match('t=(%-?[%d%.]+)')), tonumber(data:match('b=(%-?[%d%.]+)'))
+      if t and b then
+        throttle, brake = t, b
+        pFilter = tonumber(data:match('f=(%d)')) == 2 and FILTER_DIRECT or FILTER_PAD
+      end
+    elseif data:sub(1, 9) == 'gs1 mode ' then
+      modePedals = data:match('pedals=(%d)') == '1'
+      modeGyro = data:match('gyro=(%d)') == '1'
+      modeHeard = true
     end
+  end
+
+  modeQuiet = modeHeard and 0 or modeQuiet + dtReal
+  updatePauses()
+  if paused.camera then holdCamera() end
+
+  for name in pairs(pedalSince) do pedalSince[name] = pedalSince[name] + dtReal end
+  if throttle then
+    pedalQuiet = 0
+    applyPedals(math.max(0, math.min(1, throttle)), math.max(0, math.min(1, brake)), pFilter)
+  elseif pedalSent.throttle > 0 or pedalSent.brake > 0 then
+    pedalQuiet = pedalQuiet + dtReal
+    if pedalQuiet > TIMEOUT then releasePedals() end
   end
 
   if value then
@@ -127,11 +240,16 @@ local function onGyroSteerApplied(value)
 end
 
 local function onExtensionLoaded()
+  pause('camera', false, true)
+  pause('steering', false, true)
   openSocket()
 end
 
 local function onExtensionUnloaded()
   if active then release() end
+  releasePedals()
+  pause('camera', false)
+  pause('steering', false)
   if udp then
     udp:close()
     udp = nil

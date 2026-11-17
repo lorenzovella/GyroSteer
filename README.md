@@ -6,9 +6,9 @@ motion from (Switch Pro, DualShock 4, DualSense).
 
 BeamNG can't read a controller's gyro, so this comes in two parts:
 
-- **GyroSteer.app** reads the controller's tilt and sends a steering value to the game over UDP on
-  `127.0.0.1:47731`. Its window shows the steering wheel, live graphs, and the settings.
-- **The mod** (`mod/gyro_steer/`) receives the value and applies it through the game's normal steering input, so
+- **GyroSteer.app** reads the controller's tilt and sticks, and sends steering, throttle and brake to the game over
+  UDP on `127.0.0.1:47731`. Its window shows the steering wheel, the pedals, live graphs, and the settings.
+- **The mod** (`mod/gyro_steer/`) receives the values and applies them through the game's normal inputs, so
   BeamNG's gamepad smoothing and steering assists still apply. It answers with what the car actually did, which
   the app graphs.
 
@@ -29,12 +29,28 @@ BeamNG can't read a controller's gyro, so this comes in two parts:
 
 You can't tilt a controller more than 90° each way, but a car's steering wheel turns much further. So:
 
-- Up to a tilt you choose (60° by default), the wheel follows the controller exactly, degree for degree.
+- Up to a tilt you choose (48° by default), the wheel follows the controller exactly, degree for degree.
 - Tilt past that and the wheel keeps turning on its own. The further you tilt, the faster it turns, up to full lock.
 - Tilt back inside that range and the wheel unwinds smoothly with your hand. It's straight again when the
   controller is level, and from there it follows your hand exactly again.
 
 To use it, set **Full lock** above the keep-turning tilt, for example 270°, or about 450° like a real car.
+
+### Gas and brake on the sticks
+
+In Switch mode the triggers are only on or off, so GyroSteer turns the sticks into analog pedals:
+
+- **Right stick: throttle. Left stick: brake.**
+- In the middle the pedal is at 0. Push the stick further from the middle, in any direction, and the pedal goes
+  further, up to 1 at the edge.
+- The triggers still work too, while the sticks are at rest.
+- If the app closes or the controller drops out while a pedal is down, the mod lets go of it within half a second.
+
+While the sticks are pedals, the mod pauses the game's stick camera, and, while the gyro steers, the stick's own
+steering, so pushing a stick for the pedals doesn't swing the camera or steer. The mouse camera and the triggers
+keep working; turning the camera with the keyboard pauses too. "Sticks are gas and brake: stick camera paused" pops up in the game when this starts.
+Everything comes back when you switch off **Gas and brake** (or the gyro, for the steering) in the window, quit
+the app, or it stops answering for 2 seconds. Your BeamNG bindings themselves are never changed.
 
 ### Controller buttons
 
@@ -70,14 +86,16 @@ These are in the window and are saved between runs:
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| Full lock | 45° | How far the wheel turns each way for full lock. Less is quicker steering. |
+| Full lock | 50° | How far the wheel turns each way for full lock. Less is quicker steering. |
 | Keep turning past a tilt | on | Lets the wheel go past the tilt below, up to full lock |
-| Keep turning past | 60° | Up to this tilt, the wheel follows the controller exactly |
-| Turning speed | 270°/s | How fast the wheel keeps turning with the controller tilted all the way (90°). It's slower just past the threshold. |
+| Keep turning past | 48° | Up to this tilt, the wheel follows the controller exactly |
+| Turning speed | 350°/s | How fast the wheel keeps turning with the controller tilted all the way (90°). It's slower just past the threshold. |
 | Dead zone | 1.5° | Tilt ignored around straight |
-| Curve | 1.0 | Above 1 makes small tilts gentler, for finer control at speed |
+| Curve | 1.5 | Above 1 makes small tilts gentler, for finer control at speed |
 | Steer the other way | off | Flips left and right |
-| Send as a wheel, not a gamepad | off | Skips BeamNG's gamepad smoothing and its speed-based steering limit |
+| Send as a wheel, not a gamepad | on | Skips BeamNG's gamepad smoothing and its speed-based steering limit |
+| Gas and brake (sticks as pedals) | on | Right stick is the throttle, left stick the brake |
+| Stick dead zone | 5% | Stick movement ignored around the middle, so a resting stick is exactly 0 |
 
 ## Troubleshooting
 

@@ -165,6 +165,8 @@ struct SidePanel: View {
             }
 
             Divider()
+            pedalsSection
+            Divider()
             buttonsSection
             Divider()
             tuningSection
@@ -211,6 +213,28 @@ struct SidePanel: View {
                     }
                 }
             }
+        }
+    }
+
+    private var pedalsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Gas and brake").font(.headline)
+                Spacer()
+                Toggle("Sticks as pedals", isOn: $engine.pedals).toggleStyle(.switch).labelsHidden()
+                    .help("Right stick is the throttle, left stick the brake")
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Right stick is the throttle, left stick the brake. The further from the middle, in any "
+                     + "direction, the harder.")
+                    .font(.caption).foregroundStyle(.secondary)
+                PedalBar(title: "Throttle · right stick", value: engine.throttle, color: .series3)
+                PedalBar(title: "Brake · left stick", value: engine.brake, color: .series2)
+                SliderRow(title: "Stick dead zone", value: $engine.pedalDeadzone, bounds: 0...30, step: 1,
+                          format: "%.0f%% of travel", help: "Stick movement ignored around the middle")
+            }
+            .disabled(!engine.pedals)
+            .opacity(engine.pedals ? 1 : 0.5)
         }
     }
 
@@ -294,6 +318,30 @@ struct TiltMeter: View {
             }
             .font(.caption2)
             .foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// A pedal from 0 (empty) to 1 (full), with its percentage.
+struct PedalBar: View {
+    let title: String
+    let value: Double
+    let color: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text(title).font(.callout)
+                Spacer()
+                Text(String(format: "%.0f%%", value * 100)).font(.callout).monospacedDigit().foregroundStyle(.secondary)
+            }
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.secondary.opacity(0.15))
+                    Capsule().fill(color).frame(width: max(0, min(1, value)) * geo.size.width)
+                }
+            }
+            .frame(height: 8)
         }
     }
 }
