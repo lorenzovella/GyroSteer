@@ -19,7 +19,9 @@ default = ["system-sdl"]
 # Link the SDL3 that's installed on this machine (Homebrew, apt, vcpkg). Quick for development.
 system-sdl = ["sdl3-sys/use-pkg-config", "sdl3-sys/use-vcpkg"]
 # Build SDL3 from source and link it in, so the app runs without SDL installed. Used for releases; needs cmake.
-static-sdl = ["sdl3-sys/build-from-source-static"]
+# SDL only reads the controller (the window is egui's), so it's built without its own windowing; on Linux that
+# needs SDL told it's deliberate (SDL_UNIX_CONSOLE_BUILD), or its build stops looking for X11 and Wayland.
+static-sdl = ["sdl3-sys/build-from-source-static", "sdl3-sys/sdl-unix-console-build"]
 
 [profile.release]
 lto = "thin"
