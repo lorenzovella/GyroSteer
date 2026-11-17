@@ -4,6 +4,7 @@ version = "0.3.0"
 edition = "2024"
 description = "Steer in BeamNG.drive by tilting a controller like a steering wheel"
 license = "GPL-3.0-or-later"
+repository = "https://github.com/lorenzovella/GyroSteer"
 publish = false
 
 [dependencies]

@@ -2,6 +2,9 @@
 
 Steer in BeamNG.drive by tilting your controller like a steering wheel, with analog gas and brake on the sticks.
 
+![GyroSteer's window: the steering wheel, pedals and button settings on the left; live graphs of the controller's
+tilt, the steering sent to BeamNG and the raw sensors on the right](docs/screenshot.png)
+
 BeamNG can't read a controller's gyro, so GyroSteer comes in two parts:
 
 - **The app** reads the controller's tilt and sticks, and sends steering, throttle and brake to the game. Its window
@@ -21,8 +24,8 @@ The two talk over UDP on `127.0.0.1:47731`, so the app has to run on the same co
 
 ## Install
 
-Download the latest release from the [Releases](../../releases) page. You need two files: the mod,
-`gyro_steer.zip`, and the app for your computer.
+Download the app for your computer from the [Releases](https://github.com/lorenzovella/GyroSteer/releases) page.
+Each download also contains the mod, `gyro_steer.zip`, which is on the page on its own too.
 
 ### 1. The mod
 
@@ -150,7 +153,7 @@ These are in the window and are saved between runs.
 
 Tested with a Machenike G5 Pro (Switch mode, Bluetooth) on macOS, with BeamNG 0.40 running through Wine. The Windows
 and Linux builds come from the same code but haven't been tried on real hardware yet. Reports are welcome in the
-issues.
+[issues](https://github.com/lorenzovella/GyroSteer/issues).
 
 ## Building from source
 

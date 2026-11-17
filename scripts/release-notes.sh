@@ -12,14 +12,15 @@ cat <<NOTES
 
 ### Which files?
 
-You need **the mod** and **the app for your computer**:
+Download the app for your computer. Each one also contains the BeamNG mod, \`gyro_steer.zip\`: put it, still
+zipped, in BeamNG's \`mods\` folder.
 
 | File | What |
 | --- | --- |
-| \`gyro_steer.zip\` | The BeamNG mod. Put it, still zipped, in BeamNG's \`mods\` folder. |
-| \`GyroSteer-$version-Windows.zip\` | The app for Windows |
-| \`GyroSteer-$version-macOS.zip\` | The app for macOS (BeamNG itself runs through CrossOver or another Wine wrapper) |
-| \`GyroSteer-$version-Linux-x86_64.tar.gz\` | The app for Linux |
+| \`GyroSteer-$version-Windows.zip\` | The app for Windows, and the mod |
+| \`GyroSteer-$version-macOS.zip\` | The app for macOS (BeamNG itself runs through CrossOver or another Wine wrapper), and the mod |
+| \`GyroSteer-$version-Linux-x86_64.tar.gz\` | The app for Linux, and the mod |
+| \`gyro_steer.zip\` | Just the mod |
 
 Setup and troubleshooting: see the README.
 NOTES

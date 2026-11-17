@@ -1,5 +1,5 @@
 -- GyroSteer: steers the player's car from the tilt of a controller, as measured by the GyroSteer app
--- and sent here over UDP on 127.0.0.1.
+-- (https://github.com/lorenzovella/GyroSteer) and sent here over UDP on 127.0.0.1.
 --
 -- From the app: "gs1 s=<steering -1..1, positive = right> f=<input filter: 1 gamepad, 2 wheel>", "gs1 off", or
 -- "gs1 ping". Each batch gets an answer, "gs1 ack car=<0|1> on=<0|1> [applied=<the car's steering input>] v=<VERSION>",

@@ -39,6 +39,7 @@ jobs:
 
   app:
     name: App (${{ matrix.name }})
+    needs: mod
     strategy:
       fail-fast: false
       matrix:
@@ -57,6 +58,11 @@ jobs:
       MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
       - uses: actions/checkout@v4
+      # Each app download carries the mod too.
+      - uses: actions/download-artifact@v4
+        with:
+          name: mod
+          path: dist
       - name: Rust
         run: rustup update stable --no-self-update && rustup default stable
       - name: Linux build dependencies
@@ -98,7 +104,7 @@ jobs:
           cargo build --locked --release $FEATURES
           mkdir -p "dist/GyroSteer-$VERSION-Windows"
           cp target/release/gyrosteer.exe "dist/GyroSteer-$VERSION-Windows/GyroSteer.exe"
-          cp README.md LICENSE "dist/GyroSteer-$VERSION-Windows/"
+          cp dist/gyro_steer.zip README.md LICENSE "dist/GyroSteer-$VERSION-Windows/"
           (cd dist && 7z a -tzip "GyroSteer-$VERSION-Windows.zip" "GyroSteer-$VERSION-Windows")
       - name: Build (Linux)
         if: runner.os == 'Linux'
@@ -107,7 +113,7 @@ jobs:
           dir="dist/GyroSteer-$VERSION-Linux-x86_64"
           mkdir -p "$dir"
           cp target/release/gyrosteer packaging/linux/gyrosteer.desktop packaging/linux/70-gyrosteer.rules \
-            README.md LICENSE "$dir/"
+            dist/gyro_steer.zip README.md LICENSE "$dir/"
           cp assets/icon-256.png "$dir/gyrosteer.png"
           tar -czf "$dir.tar.gz" -C dist "$(basename "$dir")"
 
@@ -115,8 +121,8 @@ jobs:
         with:
           name: app-${{ matrix.name }}
           path: |
-            dist/*.zip
-            dist/*.tar.gz
+            dist/GyroSteer-*.zip
+            dist/GyroSteer-*.tar.gz
 
   release:
     name: Release
