@@ -26,7 +26,7 @@
 
 local M = {}
 
-local VERSION = '0.3.0'  -- matches the app's version; checked by the release build
+local VERSION = '0.3.1'  -- matches the app's version; checked by the release build
 local PORT = 47731
 local TIMEOUT = 0.5   -- seconds without steering before it is handed back
 local RESEND = 0.1    -- seconds; resend an unchanged value so a stick nudge doesn't stick

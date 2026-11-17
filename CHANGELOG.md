@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.1
 
 - **Reset to defaults** button for the tuning, with a confirmation. Controller buttons keep their own Default
   buttons.
