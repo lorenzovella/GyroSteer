@@ -1,0 +1,143 @@
+# Every push and pull request: tests and builds the mod and the app for macOS, Windows and Linux.
+# Pushing a tag like v0.3.0 also publishes a GitHub release with all of them (see "Releasing" in README.md).
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mod:
+    name: Mod
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y luajit zip
+      - name: App and mod versions match
+        run: scripts/version.sh
+      - name: Tag matches the version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version=$(scripts/version.sh)
+          if [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match version $version in Cargo.toml and the mod"
+            exit 1
+          fi
+      - name: Test the mod
+        run: luajit tests/mod_test.lua
+      - run: scripts/package-mod.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mod
+          path: dist/gyro_steer.zip
+
+  app:
+    name: App (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: macOS, os: macos-latest }
+          - { name: Windows, os: windows-latest }
+          # The oldest supported Ubuntu, so the binary runs on older glibc too.
+          - { name: Linux, os: ubuntu-22.04 }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      # SDL3 is built from source and linked in, so players don't need it installed.
+      FEATURES: --no-default-features --features static-sdl
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust
+        run: rustup update stable --no-self-update && rustup default stable
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev \
+            libxrandr-dev libxi-dev libgl1-mesa-dev
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+      - name: Test
+        run: cargo test --locked $FEATURES
+      - name: Version
+        run: echo "VERSION=$(scripts/version.sh)" >> "$GITHUB_ENV"
+
+      - name: Build (macOS, Apple Silicon + Intel)
+        if: runner.os == 'macOS'
+        run: |
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          cargo build --locked --release $FEATURES --target aarch64-apple-darwin
+          mkdir -p target/universal
+          if cargo build --locked --release $FEATURES --target x86_64-apple-darwin; then
+            lipo -create -output target/universal/gyrosteer \
+              target/aarch64-apple-darwin/release/gyrosteer target/x86_64-apple-darwin/release/gyrosteer
+          else
+            echo "::warning::The Intel build failed; the Mac download is Apple Silicon only"
+            cp target/aarch64-apple-darwin/release/gyrosteer target/universal/gyrosteer
+          fi
+          lipo -info target/universal/gyrosteer
+          scripts/bundle-macos.sh target/universal/gyrosteer
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cargo build --locked --release $FEATURES
+          mkdir -p "dist/GyroSteer-$VERSION-Windows"
+          cp target/release/gyrosteer.exe "dist/GyroSteer-$VERSION-Windows/GyroSteer.exe"
+          cp README.md LICENSE "dist/GyroSteer-$VERSION-Windows/"
+          (cd dist && 7z a -tzip "GyroSteer-$VERSION-Windows.zip" "GyroSteer-$VERSION-Windows")
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cargo build --locked --release $FEATURES
+          dir="dist/GyroSteer-$VERSION-Linux-x86_64"
+          mkdir -p "$dir"
+          cp target/release/gyrosteer packaging/linux/gyrosteer.desktop packaging/linux/70-gyrosteer.rules \
+            README.md LICENSE "$dir/"
+          cp assets/icon-256.png "$dir/gyrosteer.png"
+          tar -czf "$dir.tar.gz" -C dist "$(basename "$dir")"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-${{ matrix.name }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [mod, app]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          scripts/release-notes.sh "$version" > notes.md
+          prerelease=""
+          case "$version" in *-*) prerelease="--prerelease" ;; esac
+          ls -la dist
+          gh release create "$GITHUB_REF_NAME" dist/* --title "GyroSteer $version" --notes-file notes.md $prerelease

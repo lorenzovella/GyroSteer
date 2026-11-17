@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=GyroSteer
+Comment=Steer in BeamNG.drive by tilting a controller
+Exec=gyrosteer
+Icon=gyrosteer
+Terminal=false
+Categories=Game;Utility;
+StartupWMClass=gyrosteer

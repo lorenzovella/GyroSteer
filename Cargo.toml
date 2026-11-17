@@ -1,0 +1,25 @@
+[package]
+name = "gyrosteer"
+version = "0.3.0"
+edition = "2024"
+description = "Steer in BeamNG.drive by tilting a controller like a steering wheel"
+license = "GPL-3.0-or-later"
+publish = false
+
+[dependencies]
+eframe = { version = "0.37", default-features = false, features = ["default_fonts", "glow", "persistence", "wayland", "x11"] }
+egui_plot = "0.38"
+serde = { version = "1", features = ["derive"] }
+png = "0.18"
+sdl3-sys = { version = "0.7", default-features = false, features = ["no-default-subsystems", "sdl-joystick", "sdl-hidapi", "sdl-sensor"] }
+
+[features]
+default = ["system-sdl"]
+# Link the SDL3 that's installed on this machine (Homebrew, apt, vcpkg). Quick for development.
+system-sdl = ["sdl3-sys/use-pkg-config", "sdl3-sys/use-vcpkg"]
+# Build SDL3 from source and link it in, so the app runs without SDL installed. Used for releases; needs cmake.
+static-sdl = ["sdl3-sys/build-from-source-static"]
+
+[profile.release]
+lto = "thin"
+strip = true
